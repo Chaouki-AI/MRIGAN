@@ -2,6 +2,9 @@ import torch
 import numpy as np
 from PIL import Image
 import torch.nn as nn
+from .ssim import MS_SSIM as SSIM
+
+ssim_metric = SSIM()
 
 class RunningAverage:
     def __init__(self):
@@ -31,18 +34,19 @@ class RunningAverageDict:
     def get_value(self):
         return {key: value.get_value() for key, value in self._dict.items()}
 
-def compute_errors(gt, pred):
-    thresh = np.maximum((gt / pred), (pred / gt))
+def compute_errors(gt, pred, mask):
+    thresh = np.maximum((gt[mask] / pred[mask]), (pred[mask] / gt[mask]))
     a1 = (thresh < 1.25).mean()
     a2 = (thresh < 1.25 ** 2).mean()
     a3 = (thresh < 1.25 ** 3).mean()
 
-    abs_rel = np.mean(np.abs(gt - pred) / gt)
+    abs_rel = np.mean(np.abs(gt[mask] - pred[mask]) / gt[mask])
 
-    rmse = (gt - pred) ** 2
+    rmse = (gt[mask] - pred[mask]) ** 2
     rmse = np.sqrt(rmse.mean())
+    ssim = ssim_metric(np.expand_dims(gt*mask, 0), np.expand_dims(pred*mask, 0)).numpy().mean()
 
-    return dict(a1=a1, a2=a2, a3=a3, abs_rel=abs_rel, rmse=rmse)
+    return dict(a1=a1, a2=a2, a3=a3, abs_rel=abs_rel, rmse=rmse, ssim=ssim)
 
 class Loss(nn.Module): 
     def __init__(self, args):

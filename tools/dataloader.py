@@ -3,6 +3,7 @@ import glob
 import torch
 import random
 import pydicom
+import numpy as np
 from PIL import Image
 from PIL import Image, ImageFilter
 import torchvision.transforms as transforms
@@ -12,12 +13,9 @@ class ImagePathDataset(Dataset):
     def __init__(self, image_paths, shape = (512, 512), scales = [1, 8], compress = [10, 80], blur = [0.2, 2], RGB = True):
         self.image_paths = image_paths
         # Define a basic transformation for HR images:
-        if RGB :
-            self.basic_transform = transforms.Compose([transforms.ToTensor()])#,transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]) 
-            self.type_img = "RGB"
-        else:
-            self.basic_transform = transforms.Compose([transforms.ToTensor()])
-            self.type_img = "L"
+        
+        self.basic_transform = transforms.Compose([transforms.ToTensor()])
+        self.type_img = "RGB" if RGB else "L"
         self.shape    = shape
         self.scales   = scales
         self.compress = compress
@@ -27,10 +25,23 @@ class ImagePathDataset(Dataset):
 
     def __getitem__(self, idx):
         image_path = self.image_paths[idx]
-        image      = Image.open(image_path).convert(self.type_img).resize(self.shape)
+        if '.jpg' in image_path : 
+            image      = Image.open(image_path)
+        else : 
+            image = self.read_dcm(image_path)
+        image = image.convert(self.type_img).resize(self.shape)
         hr_tensor  = self.basic(image)
         lr_tensor  = self.transform(image)
         return {"HR": hr_tensor, "LR": lr_tensor}
+        
+    def read_dcm(self, path):
+        ds = pydicom.dcmread(path).pixel_array.astype(np.float32)
+        ds /= ds.max()
+        ds *= 255
+        ds = np.concatenate([np.expand_dims(ds, 2), np.expand_dims(ds, 2), np.expand_dims(ds, 2)], -1)
+        ds = ds.astype(np.uint8)
+        image = Image.fromarray(ds)
+        return image
 
     def transform(self, img):
         """

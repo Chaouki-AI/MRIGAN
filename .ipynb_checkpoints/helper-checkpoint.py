@@ -6,10 +6,11 @@ import numpy as np
 from torch import nn
 from tqdm import tqdm
 from datetime import datetime
-from tools.metrics import Loss, GeneratorLoss
 import matplotlib.pyplot as plt
+from tools.ssim import MS_SSIM as SSIM
 from torchvision.utils import make_grid
 from torch.utils.data import DataLoader
+from tools.metrics import Loss, GeneratorLoss
 from tools.dataloader import ImagePathDataset
 from tools.models import Discriminator, Generator
 from torch.utils.tensorboard import SummaryWriter
@@ -19,9 +20,6 @@ from tools.metrics import compute_errors, RunningAverage, RunningAverageDict
 def load_model(args):
     Dis = Discriminator()
     Gen = Generator(3 if args.RGB else 1)
-    if args.pretrained is not None:
-        Gen.load_state_dict(torch.load(args.pretrained))
-        print("Generator weights loaded")
     return Dis, Gen
 
 def load_optimizers_and_schedulers(args, models, steps_per_epoch=100):
@@ -72,6 +70,10 @@ def gan_trainer(epoch, args, dataloader, G, D, adversarial_criterion, content_cr
     optimizer_G, scheduler_G = gen_opts
     optimizer_D, scheduler_D = dis_opts
 
+    global_step = 0
+    epoch_G_loss = 0.0
+    epoch_D_loss = 0.0
+
     pbar = tqdm(enumerate(dataloader), total=len(dataloader), desc=f"Epoch {epoch+1}/{args.epochs}")
     for i, batch in pbar:
         hr = batch["HR"].to(device)
@@ -103,14 +105,20 @@ def gan_trainer(epoch, args, dataloader, G, D, adversarial_criterion, content_cr
         loss_G.backward()
         optimizer_G.step()
 
+        epoch_G_loss += loss_G.item()
+        epoch_D_loss += loss_D.item()
+
+        writer.add_scalar("Loss/Generator", loss_G.item(), global_step)
+        writer.add_scalar("Loss/Discriminator", loss_D.item(), global_step)
+        writer.add_scalar("LR/Generator", scheduler_G.get_last_lr()[0], global_step)
+        writer.add_scalar("LR/Discriminator", scheduler_D.get_last_lr()[0], global_step)
+        global_step += 1
+
+        pbar.set_postfix({"G_loss": f"{loss_G.item():.4f}", "D_loss": f"{loss_D.item():.4f}"})
         scheduler_G.step()
         scheduler_D.step()
 
-        writer.add_scalar("Loss/Generator", loss_G.item(), scheduler_G.last_epoch)
-        writer.add_scalar("Loss/Discriminator", loss_D.item(), scheduler_D.last_epoch)
-        writer.add_scalar("LR/Generator", scheduler_G.get_last_lr()[0], scheduler_G.last_epoch)
-        writer.add_scalar("LR/Discriminator", scheduler_D.get_last_lr()[0], scheduler_D.last_epoch)
-        pbar.set_postfix({"G_loss": f"{loss_G.item():.4f}", "D_loss": f"{loss_D.item():.4f}"})
+    print(f" Epoch Avg. Gen. loss {(epoch_G_loss/len(dataloader)):.4f} \n Epoch Avg. Dis. loss {(epoch_D_loss/len(dataloader)):.4f}")
 
     return G, D, (optimizer_G, scheduler_G), (optimizer_D, scheduler_D), writer
 
@@ -121,6 +129,9 @@ def srgan_trainer(epoch, args, dataloader, G, D, adversarial_criterion, generato
     optimizer_G, scheduler_G = gen_opts
     optimizer_D, scheduler_D = dis_opts
 
+    global_step = 0
+    epoch_G_loss = 0.0
+    epoch_D_loss = 0.0
 
     G.train()
     D.train()
@@ -147,18 +158,19 @@ def srgan_trainer(epoch, args, dataloader, G, D, adversarial_criterion, generato
         loss_D = 1 - output_real + output_fake
         loss_D.backward()
         optimizer_D.step()
-        scheduler_G.step()
-        scheduler_D.step()
 
+        epoch_G_loss += loss_G.item()
+        epoch_D_loss += loss_D.item()
 
-        writer.add_scalar("Loss/Generator", loss_G.item(), scheduler_G.last_epoch)
-        writer.add_scalar("Loss/Discriminator", loss_D.item(), scheduler_D.last_epoch)
-        writer.add_scalar("LR/Generator", scheduler_G.get_last_lr()[0], scheduler_G.last_epoch)
-        writer.add_scalar("LR/Discriminator", scheduler_D.get_last_lr()[0], scheduler_D.last_epoch)
-        #global_step += 1
+        writer.add_scalar("Loss/Generator", loss_G.item(), global_step)
+        writer.add_scalar("Loss/Discriminator", loss_D.item(), global_step)
+        writer.add_scalar("LR/Generator", scheduler_G.get_last_lr()[0], global_step)
+        writer.add_scalar("LR/Discriminator", scheduler_D.get_last_lr()[0], global_step)
+        global_step += 1
 
         pbar.set_postfix({"G_loss": f"{loss_G.item():.4f}", "D_loss": f"{loss_D.item():.4f}"})
-        
+        scheduler_G.step()
+        scheduler_D.step()
 
     #print(f" Epoch Avg. Gen. loss {(epoch_G_loss/len(dataloader)):.4f} \n Epoch Avg. Dis. loss {(epoch_D_loss/len(dataloader)):.4f}")
 
@@ -244,6 +256,7 @@ def log_sr_images_vertical(writer, lr_tensor, sr_tensor, hr_tensor, step, sample
     # Add image to TensorBoard with unique tag
     tag = f"{tag_prefix}/Sample_{sample_id}"
     writer.add_image(tag, vertical, global_step=step)
+
 def evaluator(args, model, test_loader, epoch, device, writer):
     """
     Evaluate the model on a dataset and log comparisons.
@@ -261,6 +274,8 @@ def evaluator(args, model, test_loader, epoch, device, writer):
     """
     model.eval()
     model = model.to(device)
+    ssim_eval = SSIM()
+    ssim = 0.
     
     with torch.no_grad():
         metrics = RunningAverageDict()
@@ -294,7 +309,7 @@ def evaluator(args, model, test_loader, epoch, device, writer):
             #    writer = log_images_to_tensorboard(lr, hr, pred, batch_idx, epoch, writer, spacing=10)
             
             # Update metrics for valid regions
-            metrics.update(compute_errors(gt_depth, pred, valid_mask))
+            metrics.update(compute_errors(gt_depth*valid_mask, pred*valid_mask))
         
         
         # Format metric values and log to TensorBoard

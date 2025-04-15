@@ -10,8 +10,6 @@
 /media/rcam/481AF2891AF273742/data/MRIGAN/DATA/BASE_01
 --data_path_set2
 /media/rcam/481AF2891AF273742/data/MRIGAN/DATA/BASE_02
---pretrained
-../code/checkpoints/SRLOSS_channels-3_04_14_10_23/epoch-2_abs_rel-0.20231_A1-0.75381_best.pt
 --loss
 SRLOSS
 --optimizer

@@ -24,8 +24,6 @@ if __name__ == '__main__':
 
     parser.add_argument("--data_path_set1", default="./DATA/DATA_1/", type=str, help='path of the first  dataset of MRI images')
     parser.add_argument("--data_path_set2", default="./DATA/DATA_2/", type=str, help='path of the second dataset of MRI images')
-    parser.add_argument("--pretrained", "--pretrained", default=None, type=str, 
-                        help='path of the pretrained Generator')
     
     
     # Optimizer parameters
